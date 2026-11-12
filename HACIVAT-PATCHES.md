@@ -45,8 +45,46 @@ neither modified nor used by Hacivat.
   - A focus move while the window is inactive is not covered. GPUI does not deliver the
     blur, or send `FocusLost`, for an inactive window. That needs a change in `gpui`
     itself; Hacivat schedules it for a later patch on this branch.
+  - On its own it does not cover a direct move from one text input to another. Patch 2
+    makes GPUI send `FocusLost` for that move.
 - **Changes from the carried patch file:** none in behaviour. The `use gpui::{…}` import
   list was reflowed by `rustfmt`, because the patch file's hunk was not rustfmt-formatted.
 - **Verified:** `cargo check -p gpui_macos` and `cargo clippy -p gpui_macos`, both without
   warnings, with Rust 1.98.1 (this base's `rust-toolchain.toml` channel) on
   aarch64-apple-darwin.
+
+### 2. `gpui`: report `FocusLost` then `FocusGained` on a move between text inputs
+
+- **Commit:** "gpui: report FocusLost then FocusGained on a text input to text input move
+  (Hacivat carry)".
+- **Files:**
+  - `crates/gpui/src/window.rs` (header comment added, section 4(b)). The behaviour change
+    is in `Window::draw`.
+  - `crates/gpui/src/input.rs` (header comment added). Tests only.
+  - `crates/gpui_macos/src/window.rs`. A comment in patch 1's `text_input_state_changed`
+    now names this case. No code change.
+- **Origin:** `crates/ui/hacivat-ui-core/patches/gpui-focus-lost-on-input-to-input-move.patch`
+  in the Hacivat repository.
+- **What it does:** at this base, `Window::draw` calls
+  `PlatformWindow::text_input_state_changed` only when the window's focused text input goes
+  from Some to None (`FocusLost`) or from None to Some (`FocusGained`). When focus moves
+  straight from one text input to a different one within a frame (Some(a) to Some(b)), it
+  sent nothing. This patch sends `FocusLost` and then `FocusGained` for that move.
+  - Some to None and None to Some behave as before: one notification each.
+  - Some(a) to Some(a), a redraw or a refocus of the same input, still sends nothing.
+- **Why:** without it, patch 1 never ran for an input-to-input move. Example: a
+  programmatic focus move from a settings search box, mid-composition, to the command
+  palette's input. The macOS input method kept the composition and its candidate window
+  stayed open over the new input.
+- **Effect on other platforms at this base:** Linux and Windows use the trait's default
+  no-op. `gpui_web` and `gpui_ios` now end the old input's session and start the new one's,
+  which matches what they already do for a Some to None to Some sequence across two frames.
+  Hacivat does not build either.
+- **Tests:** `input::tests::focus_move_between_text_inputs_reports_loss_then_gain` is new.
+  `input::tests::text_notifications_require_a_focused_input_and_track_field_changes` moves
+  focus between two text inputs, so its expected sequences now include the
+  `FocusLost`, `FocusGained` pair.
+- **Verified:** `cargo test -p gpui --features test-support --lib` (423 passed, 2 ignored)
+  and `cargo clippy -p gpui -p gpui_macos --features gpui/test-support --tests`, without
+  warnings, with Rust 1.98.1 on aarch64-apple-darwin. Without the `window.rs` change, both
+  tests above fail.

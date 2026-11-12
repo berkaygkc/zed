@@ -1,3 +1,7 @@
+// Modified by the Hacivat project (2026-11-12): `Window::draw` also reports
+// `TextInputStateChange::FocusLost` then `FocusGained` when focus moves directly from one
+// text input to a different one. Original work: Zed Industries, Apache-2.0,
+// zed@912159c7ad77ce6296a93be77efc298b0b00fd50.
 #[cfg(feature = "profiler")]
 use crate::DebugFrameOverlayMode;
 #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3738,6 +3742,15 @@ impl Window {
                 } else {
                     TextInputStateChange::FocusLost
                 });
+        } else if previous.is_some() && previous != focused_text_input {
+            // Hacivat modification: focus moved straight from one text input to another
+            // within a single frame. The platform must end the old input's session (e.g.
+            // drop a live IME composition) before the new input's session starts, so this
+            // reports the loss of the old input and then the gain of the new one.
+            self.platform_window
+                .text_input_state_changed(TextInputStateChange::FocusLost);
+            self.platform_window
+                .text_input_state_changed(TextInputStateChange::FocusGained);
         }
 
         self.layout_engine.as_mut().unwrap().clear();

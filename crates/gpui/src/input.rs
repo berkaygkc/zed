@@ -1,3 +1,6 @@
+// Modified by the Hacivat project (2026-11-12): the tests cover the `FocusLost` then
+// `FocusGained` pair that `Window::draw` reports for a direct move between text inputs.
+// Original work: Zed Industries, Apache-2.0, zed@912159c7ad77ce6296a93be77efc298b0b00fd50.
 use crate::{
     App, Bounds, ClipboardItem, Context, Entity, InputHandler, Pixels, TextInputConfiguration,
     UTF16Selection, Window,
@@ -458,12 +461,16 @@ mod tests {
             window.notify_text_input_changed(&first_focus);
         })
         .unwrap();
+        // Focus moved straight from one text input to another, so the platform hears the
+        // old input's loss and then the new input's gain (Hacivat modification).
         assert_eq!(
             test_window.text_input_state_changes(),
             [
                 TextInputStateChange::FocusGained,
                 TextInputStateChange::ContentChanged,
                 TextInputStateChange::SelectionChanged,
+                TextInputStateChange::FocusLost,
+                TextInputStateChange::FocusGained,
             ]
         );
 
@@ -496,10 +503,103 @@ mod tests {
                 TextInputStateChange::FocusGained,
                 TextInputStateChange::ContentChanged,
                 TextInputStateChange::SelectionChanged,
+                TextInputStateChange::FocusLost,
+                TextInputStateChange::FocusGained,
                 TextInputStateChange::SelectionChanged,
                 TextInputStateChange::FocusLost,
             ]
         );
+    }
+
+    // Hacivat modification: a direct focus move between two text inputs.
+    #[gpui::test]
+    fn focus_move_between_text_inputs_reports_loss_then_gain(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, cx| TwoInputsTestView {
+            first: cx.new(|cx| ConfigurationTestView {
+                focus_handle: cx.focus_handle(),
+                configuration: TextInputConfiguration::default(),
+                accepts_text_input: true,
+            }),
+            second: cx.new(|cx| ConfigurationTestView {
+                focus_handle: cx.focus_handle(),
+                configuration: TextInputConfiguration::default(),
+                accepts_text_input: true,
+            }),
+        });
+        let root = window.root(cx).unwrap();
+        let test_window = cx.test_window(window.into());
+        let window = AnyWindowHandle::from(window);
+        let (first, second) = root.read_with(cx, |root, cx| {
+            (
+                root.first.read(cx).focus_handle.clone(),
+                root.second.read(cx).focus_handle.clone(),
+            )
+        });
+        let focus_and_draw = |handle: &FocusHandle, cx: &mut TestAppContext| {
+            cx.update_window(window, |_, window, cx| {
+                window.focus(handle, cx);
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+        };
+
+        focus_and_draw(&first, cx);
+        assert_eq!(
+            test_window.text_input_state_changes(),
+            [TextInputStateChange::FocusGained]
+        );
+
+        // a -> b within one frame: the old input's loss, then the new input's gain.
+        focus_and_draw(&second, cx);
+        assert_eq!(
+            test_window.text_input_state_changes(),
+            [
+                TextInputStateChange::FocusGained,
+                TextInputStateChange::FocusLost,
+                TextInputStateChange::FocusGained,
+            ]
+        );
+
+        // Refocusing the same input, or redrawing, forwards nothing.
+        focus_and_draw(&second, cx);
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(test_window.text_input_state_changes().len(), 3);
+
+        // b -> a moves back the same way.
+        focus_and_draw(&first, cx);
+        assert_eq!(
+            test_window.text_input_state_changes()[3..],
+            [
+                TextInputStateChange::FocusLost,
+                TextInputStateChange::FocusGained,
+            ]
+        );
+
+        // Leaving text inputs entirely is still a single loss.
+        cx.update_window(window, |_, window, cx| {
+            window.blur(cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(
+            test_window.text_input_state_changes()[5..],
+            [TextInputStateChange::FocusLost]
+        );
+    }
+
+    struct TwoInputsTestView {
+        first: Entity<ConfigurationTestView>,
+        second: Entity<ConfigurationTestView>,
+    }
+
+    impl Render for TwoInputsTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(self.first.clone())
+                .child(self.second.clone())
+        }
     }
 
     struct ConfigurationTestView {

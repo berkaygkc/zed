@@ -2195,10 +2195,12 @@ impl PlatformWindow for MacWindow {
 
     // Hacivat modification: end the platform composition on a real text-input focus loss.
     fn text_input_state_changed(&self, change: TextInputStateChange) {
-        // GPUI sends `FocusLost` only when the window's focused text input goes from Some
-        // to None, i.e. on a real focus change. An app switch keeps GPUI focus, so it never
-        // sends it there, and the IME keeps owning that composition. `ContentChanged` and
-        // `SelectionChanged` follow every IME edit and must never discard.
+        // GPUI sends `FocusLost` only on a real focus change: when the window's focused text
+        // input goes from Some to None, or (Hacivat `gpui` carry) moves directly to a
+        // different text input, followed there by `FocusGained`. An app switch keeps GPUI
+        // focus, so it never sends it there, and the IME keeps owning that composition.
+        // `ContentChanged` and `SelectionChanged` follow every IME edit and must never
+        // discard.
         if change != TextInputStateChange::FocusLost {
             return;
         }
