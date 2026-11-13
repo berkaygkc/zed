@@ -5,8 +5,8 @@ This branch, `hacivat/912159c`, is
 The Hacivat project carries them for its use of the Apache-2.0 GPUI crates (`gpui`,
 `gpui_platform` and the platform crates they pull in). Hacivat pins this branch by commit.
 
-Nothing outside `crates/gpui*` is changed, apart from this file. Zed's GPL-3.0 crates are
-neither modified nor used by Hacivat.
+Nothing outside `crates/gpui*` and `crates/scheduler` is changed, apart from this file. Zed's
+GPL-3.0 crates are neither modified nor used by Hacivat.
 
 ## License notice (Apache-2.0, section 4)
 
@@ -88,3 +88,26 @@ neither modified nor used by Hacivat.
   and `cargo clippy -p gpui -p gpui_macos --features gpui/test-support --tests`, without
   warnings, with Rust 1.98.1 on aarch64-apple-darwin. Without the `window.rs` change, both
   tests above fail.
+
+### 3. `scheduler`: take `state` before `rng` in `TestScheduler::block_until`
+
+- **Commit:** "scheduler: take state before rng in block_until (Hacivat carry)".
+- **File:** `crates/scheduler/src/test_scheduler.rs` (header comment added, section 4(b)).
+  `crates/scheduler` is Apache-2.0 (`license = "Apache-2.0"`, `LICENSE-APACHE`).
+- **Origin:** `crates/ui/hacivat-ui-core/patches/scheduler-block-until-lock-order.patch` in
+  the Hacivat repository.
+- **What it does:** for a timed block, `block_until` evaluated
+  `self.rng.lock().random_range(self.state.lock().timeout_ticks.clone())`, which holds the
+  `rng` guard while it locks `state`. `schedule_local` and
+  `schedule_background_with_priority` lock `state` and then `rng`. The patch reads
+  `timeout_ticks` under `state`, drops that guard, and only then locks `rng`. Every path in
+  the file now takes `state` before `rng`, and no `rng` guard is held while `state` is
+  locked.
+- **Why:** with parking allowed, a task woken from another thread (a Tokio runtime thread,
+  for example) is scheduled from that thread. If it reaches `schedule_*` while the test
+  thread is inside a timed `block_until`, the two threads deadlock. Hacivat's GPUI tests hit
+  this intermittently while tearing down an app whose core runtime still wakes tasks.
+- **What it does not do:** the random sequence, and so every seed's schedule, is unchanged:
+  the same single `random_range` call draws from the same range.
+- **Verified:** `cargo +1.98.1 check -p scheduler`, `cargo +1.98.1 test -p scheduler` and
+  `cargo +1.98.1 clippy -p scheduler --tests`, without warnings, on aarch64-apple-darwin.
